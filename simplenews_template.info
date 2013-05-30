@@ -1,0 +1,6 @@
+name = "Simplenews Template"
+description = "Extends Simplenews by providing a themable template with configurable header, footer and style."
+dependencies[] = simplenews
+dependencies[] = messaging
+package = Mail
+core = 7.x
