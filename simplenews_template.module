@@ -69,9 +69,9 @@ function _simplenews_template_preview_access($nid) {
  * Implementation of hook_form_alter().
  */
 function simplenews_template_form_alter(&$form, $form_state, $form_id) {
-  if ($form_id == 'simplenews_admin_types_form') {
-    $tid = $form['tid']['#value'];
-    _simplenews_template_form_alter_newsletter_settings($form, $tid);
+  if ($form_id == 'simplenews_node_form') {
+    $newsletter = _simplenews_get_newsletter($form['nid']['#value']);
+    _simplenews_template_form_alter_newsletter_settings($form, $newsletter['tid']);
   }
   elseif ($form_id == 'simplenews_admin_settings_newsletter') {
     unset($form['simplenews_default_options']['simplenews_format']);
@@ -99,46 +99,63 @@ function simplenews_template_form_alter(&$form, $form_state, $form_id) {
  * Apply template to a newsletter as its sent.
  */
 function _simplenews_template_mail_alter_simplenews_node(&$message) {
-  // Setup newsletter data
-  $tid = reset($message['params']['context']['account']->tids);
-  if (!empty($message['params']['context']['account']->tids)) {
-    $tid = reset($message['params']['context']['account']->tids);
-  } else {
-    $tid = $message['params']['context']['newsletter']->tid;
-  }
+  $node = $message['params']['simplenews_source']->getNode();
+  $category = $message['params']['simplenews_source']->getCategory();
+  $terms = field_view_field('node', $node, 'field_simplenews_term');
+
+  $tid = $terms['#items'][0]['taxonomy_term']->tid;
 
   $newsletter = taxonomy_get_term($tid);
-  $node = $message['params']['context']['node'];
+  //$node = $message['params']['context']['node'];
   $content = $message['body']['body'];
 
   // Tokenize the header and footer: find the tokens
   global $language, $user;
   $context['node'] = $node;
-  $variables = simplenews_mail_tokens($user, $message['params']['context'], $language);
+//  $variables = simplenews_mail_tokens($user, $message['params']['context'], $language);
   
   // Retrive and filter the header content
   $header = _simplenews_template_get_header($tid);
   // Tokenize the header
-  $header = strtr($header, $variables);
+//  $header = strtr($header, $variables);
   $header = check_markup($header, _simplenews_template_get_header_format($tid), false);
 
   // Retrive and filter the footer content
   $footer = _simplenews_template_get_footer($tid);
   // Tokenize the footer
-  $footer = strtr($footer, $variables);
-  $footer = check_markup($footer, _simplenews_template_get_footer_format($tid), false);
+//  $footer = strtr($footer, $variables);
+//  $footer = check_markup($footer, _simplenews_template_get_footer_format($tid), false);
 
   // Add headers and footer
-  $content = theme('simplenews_template_content', $newsletter->name, $node->title, $header, $content, $footer);
+  $style = _simplenews_template_get_css($tid);
+  $content = theme('simplenews_template_content', array(
+		'newletter_name' => $newsletter->name,
+		'issue_title' => $node->title,
+		'header' => $header,
+		'issue_body' => $content,
+		'footer' => $footer,
+		'opt_out_hidden' => $category->opt_inout,
+		'format' => $category->format,
+		'unsubscribe_text' => 'unsib',
+		'test_message' => 'testing',
+		'key' => $message['key'],
+		'style' => $style,
+	));
 
   // Fetch Simplenews Template styling for this newsletter
-  $style = _simplenews_template_get_css($tid);
+  //$style = _simplenews_template_get_css($tid);
   $bgcolor = _simplenews_template_get_bgcolor($tid);
 
    
   if (is_null($message['body'])) {
     // Markup node body with Simplenews Template style
-    $content = theme('simplenews_template_mail', $newsletter->name, $node->title, $content, $style, $bgcolor);
+    $content = theme('simplenews_template_mail', array(
+		'newsletter_name' => $newsletter->name,
+		'issue_title' => $node->title,
+		'issue_body' => $content,
+		'style' => $style,
+		'bgcolor' => $bgcolor
+	));
   }
   
   // Run HTML and CSS through Emogrifier, if available
@@ -152,12 +169,10 @@ function _simplenews_template_mail_alter_simplenews_node(&$message) {
  */
 function _simplenews_template_preview($nid) {
   $node = node_load($nid);
-  $node = node_build_content($node);
-
-  // Setup newsletter data
-  $tid = $node->simplenews['tid'];
-  $newsletter = taxonomy_get_term($tid);
-  $content = $node->content['body']['#value'];
+  $terms = field_view_field('node', $node, 'field_simplenews_term');
+  $tid = $terms['#items'][0]['taxonomy_term']->tid;
+  $newsletter = taxonomy_term_load($tid);
+  $content = $node->body['und'][0]['value'];
 
   // Retrive and filter the header content
   $header = _simplenews_template_get_header($tid);
@@ -168,7 +183,13 @@ function _simplenews_template_preview($nid) {
   $footer = check_markup($footer, _simplenews_template_get_footer_format($tid), false);
 
   // Add headers and footer
-  $content = theme('simplenews_template_content', $newsletter->name, $node->title, $header, $content, $footer);
+  $content = theme('simplenews_template_content', array(
+		'newletter_name' => $newsletter->name,
+		'issue_title' => $node->title,
+		'header' => $header,
+		'issue_body' => $content,
+		'footer' => $footer
+	));
 
   // Fetch Simplenews Template styling for this newsletter
   $style = _simplenews_template_get_css($tid);
@@ -176,7 +197,13 @@ function _simplenews_template_preview($nid) {
   $bgcolor = _simplenews_template_get_bgcolor($tid);
 
   // Markup node body with Simplenews Template style
-  $content = theme('simplenews_template_mail', $newsletter->name, $node->title, $content, $style, $bgcolor);
+  $content = theme('simplenews_template_mail', array(
+		'newsletter_name' => $newsletter->name,
+		'issue_title' => $node->title,
+		'issue_body' => $content,
+		'style' => $style,
+		'bgcolor' => $bgcolor
+	));
 
   return '<div id="preview">'. $content .'</div>';
 }
@@ -202,28 +229,14 @@ function _simplenews_template_form_alter_newsletter_settings(&$form, $tid = null
  */
 function _simplenews_template_form_alter_newsletter_settings_submit($form, $form_state) {
   // Fetch tid directly
-  if ($form_state['values']['tid']) {
-    $tid = $tidedit = $form_state['values']['tid'];
-  }
-
-  // Fetch tid from name lookup in current vocabulary
-  else {
-    $tidedit = '';
-    $terms = taxonomy_get_term_by_name($form_state['values']['name']);
-    foreach ($terms as $key => $term) {
-      if ($term->vid == $form_state['values']['vid']) {
-        $tid = $term->tid;
-        break;
-      }
-      return;
-    }
-  }
+  $newsletter = _simplenews_get_newsletter($form['nid']['#value']);
+  $tid = $tidedit = $newsletter['tid'];
 
   // Set Drupal variables
-  variable_set("simplenews_template_header_$tid", $form_state['values']["simplenews_template_header_$tidedit"]);
-  variable_set("simplenews_template_header_format_$tid", $form_state['values']["simplenews_template_header_format_$tidedit"]);
-  variable_set("simplenews_template_footer_$tid", $form_state['values']["simplenews_template_footer_$tidedit"]);
-  variable_set("simplenews_template_footer_format_$tid", $form_state['values']["simplenews_template_footer_format_$tidedit"]);
+  variable_set("simplenews_template_header_$tid", $form_state['values']["simplenews_template_header_$tidedit"]["value"]);
+  variable_set("simplenews_template_header_format_$tid", $form_state['values']["simplenews_template_header_$tidedit"]["format"]);
+  variable_set("simplenews_template_footer_$tid", $form_state['values']["simplenews_template_footer_$tidedit"]["value"]);
+  variable_set("simplenews_template_footer_format_$tid", $form_state['values']["simplenews_template_footer_$tidedit"]["format"]);
   variable_set("simplenews_template_bgcolor_$tid", $form_state['values']["simplenews_template_bgcolor_$tidedit"]);
   variable_set("simplenews_template_css_$tid", $form_state['values']["simplenews_template_css_$tidedit"]);
 }
@@ -240,14 +253,16 @@ function _simplenews_template_form_alter_header(&$form, $tid) {
 
   // Header
   $form['simplenews_template']['simplenews_template_header']["simplenews_template_header_$tid"] = array(
-    '#type' => 'textarea',
+    '#type' => 'text_format',
+    '#base_type' => 'textarea',
     '#title' => t('Header'),
     '#description' => t("Enter the content of the newsletter's header."),
     '#default_value' => _simplenews_template_get_header($tid),
+    '#format' => _simplenews_template_get_header_format($tid),
   );
 
   // Header input format
-  $form['simplenews_template']['simplenews_template_header']["simplenews_template_header_format_$tid"] = filter_form(_simplenews_template_get_header_format($tid), 1, array("simplenews_template_header_format_$tid"));
+  //$form['simplenews_template']['simplenews_template_header']["simplenews_template_header_format_$tid"] = filter_form(_simplenews_template_get_header_format($tid), 1, array("simplenews_template_header_format_$tid"));
 }
 
 function _simplenews_template_form_alter_footer(&$form, $tid) {
@@ -262,14 +277,16 @@ function _simplenews_template_form_alter_footer(&$form, $tid) {
 
   // Footer
   $form['simplenews_template']['simplenews_template_footer']["simplenews_template_footer_$tid"] = array(
-    '#type' => 'textarea',
+    '#type' => 'text_format',
+    '#base_type' => 'textarea',
     '#title' => t('Footer'),
     '#description' => t("Enter the content of the newsletter's footer."),
     '#default_value' => _simplenews_template_get_footer($tid),
+    '#format' => _simplenews_template_get_header_format($tid),
   );
 
   // Footer input format
-  $form['simplenews_template']['simplenews_template_footer']["simplenews_template_footer_format_$tid"] = filter_form(_simplenews_template_get_footer_format($tid), 1, array("simplenews_template_footer_format_$tid"));
+  //$form['simplenews_template']['simplenews_template_footer']["simplenews_template_footer_format_$tid"] = filter_form(_simplenews_template_get_footer_format($tid), 1, array("simplenews_template_footer_format_$tid"));
 }
 
 function _simplenews_template_form_alter_style(&$form, $tid) {
@@ -310,46 +327,68 @@ function _simplenews_template_form_alter_style(&$form, $tid) {
 function simplenews_template_theme() {
   return array(
     'simplenews_template_content' => array(
-      'arguments' => array(
-        'newletter_name' => null,
-        'issue_title' => null,
-        'header' => null,
-        'issue_body' => null,
-        'footer' => null,
+      'variables' => array(
+        'newletter_name' => NULL,
+        'issue_title' => NULL,
+        'header' => NULL,
+        'issue_body' => NULL,
+        'footer' => NULL,
+	'opt_out_hidden' => NULL,
+	'format' => NULL,
+	'unsubscribe_text' => NULL,
+	'test_message' => NULL,
+	'key' => NULL,
+	'style' => NULL,
       ),
+      'path' => $path . '/templates',
+      'template' => 'newsletter_content_template_01',
     ),
     'simplenews_template_mail' => array(
-      'arguments' => array(
-        'newsletter_name' => null,
-        'issue_title' => null,
-        'issue_body' => null,
-        'style' => null,
-        'bgcolor' => null,
+      'variables' => array(
+        'newsletter_name' => NULL,
+        'issue_title' => NULL,
+        'issue_body' => NULL,
+        'style' => NULL,
+        'bgcolor' => NULL,
       ),
+      'path' => $path . '/templates',
+      'template' => 'newsletter_mail_template_01',
     ),
+    'simplenews_template_newsletter_footer' => array(
+      'variables' => array(
+        'opt_out_hidden' => NULL,
+	'format' => NULL,
+	'unsubscribe_text' => NULL,
+	'test_message' => NULL,
+	'key' => NULL,
+      ),
+      'path' => $path . '/templates',
+      'template' => 'simplenews-newsletter-footer',
+     ),
   );
 }
 
 /**
  * Theme function for the actual content.
  */
-function theme_simplenews_template_content($newsletter_name, $issue_title, $header, $issue_body, $footer) {
+function theme_simplenews_template_content($variables) {
+  $content = "";
   // Theme the header
-  if ($header) {
-    $content = "<div class=\"simplenews-template-header\">\n$header\n</div>\n";
+  if ($variables['header']) {
+    $content = "<div class=\"simplenews-template-header\">\n".$variables['header']."\n</div>\n";
   }
 
   // Theme the body
-  if ($header || $footer) {
-    $content .= "<div class=\"simplenews-template-body\">\n<h1>$issue_title</h1>\n$issue_body\n</div>\n";
+  if ($variables['header'] || $variables['footer']) {
+    $content .= "<div class=\"simplenews-template-body\">\n<h1>".$variables['issue_title']."</h1>\n".$variables['issue_body']."\n</div>\n";
   }
   else {
-    $content .= $issue_body;
+    $content .= $variables['issue_body'];
   }
 
   // Theme the footer
-  if ($footer) {
-    $content .= "<div class=\"simplenews-template-footer\">\n$footer\n</div>\n";
+  if ($variables['footer']) {
+    $content .= "<div class=\"simplenews-template-footer\">\n".$variables['footer']."\n</div>\n";
   }
 
   return $content;
@@ -359,23 +398,23 @@ function theme_simplenews_template_content($newsletter_name, $issue_title, $head
  * Themeable function for the HTML e-mail content.
  * Based on http://www.mailchimp.com/resources/templates/.
  */
-function theme_simplenews_template_mail($newsletter_name, $issue_title, $issue_body, $style, $bgcolor) {
+function theme_simplenews_template_mail($variables) {
   return <<<EOT
 <!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
 <html>
 <head>
-<title>$newsletter_name: $issue_title</title>
+<title>{$variables['newsletter_name']}: {$variables['issue_title']}</title>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <style type="text/css">
 <!--
-$style
+{$variables['style']}
 -->
 </style>
 </head>
-<body bgcolor="$bgcolor">
-<table class="simplenews-template-background" width="100%" bgcolor="$bgcolor" cellpadding="0" cellspacing="0"><tr><td valign="top" align="center">
+<body bgcolor="{$variables['bgcolor']}">
+<table class="simplenews-template-background" width="100%" bgcolor="{$variables['bgcolor']}" cellpadding="0" cellspacing="0"><tr><td valign="top" align="center">
 <table class="simplenews-template-content" width="100%" cellpadding="0" cellspacing="0"><tr><td align="left">
-$issue_body
+{$variables['issue_body']}
 </td></tr></table>
 </td></tr></table>
 </body>
@@ -394,7 +433,7 @@ EOT;
 function simplenews_template_theme_registry_alter(&$theme_registry) {
   // Steal theme_simplenews_newsletter_body() from Simplenews
   if (!empty($theme_registry['simplenews_newsletter_body'])) {
-    $theme_registry['simplenews_newsletter_body']['function'] = '_simplenews_template_theme_simplenews_newsletter_body';
+    //$theme_registry['simplenews_newsletter_body']['function'] = '_simplenews_template_theme_simplenews_newsletter_body';
   }
 }
 
@@ -402,7 +441,7 @@ function simplenews_template_theme_registry_alter(&$theme_registry) {
  * Hi-jacker to stop the title from being inserted above the HTML in the mail.
  */
 function _simplenews_template_theme_simplenews_newsletter_body($node, $title, $language = NULL) {
-  return $node->body;
+  //return $node->body;
 }
 
 /**
@@ -429,12 +468,14 @@ function _simplenews_template_emogrify($html, $css) {
  * Parses CSS and prepends 'div.node div.content' to all selectors.
  */
 function _simplenews_template_nodify_style($css, $prepend = 'div.node div.content') {
+  $new_css = "";
   $pattern = '/\s*([^{]+){([^}]*)}/';
 	preg_match_all($pattern, $css, $matches);
+  $selectors = "";
 
   foreach ($matches[1] as $key => $selector_string) {
     foreach (explode(',', $selector_string) as $key2 => $selector) {
-      $selectors = ($selectors ? $selectors .', ' : '') . $prepend .' '. trim($selector);
+      $selectors = (isset($selectors) ? $selectors .', ' : '') . $prepend .' '. trim($selector);
     }
     $new_css = ($new_css ? $new_css ."\n" : '') . $selectors . ' {'. trim($matches[2][$key]) .'}';
     unset($selectors);
@@ -459,7 +500,7 @@ function _simplenews_template_get_header($tid) {
  * Returns header format.
  */
 function _simplenews_template_get_header_format($tid) {
-  return variable_get("simplenews_template_header_format_$tid", FILTER_FORMAT_DEFAULT);
+  return variable_get("simplenews_template_header_format_$tid", 'full_html');
 }
 
 /**
@@ -473,7 +514,7 @@ function _simplenews_template_get_footer($tid) {
  * Returns footer format.
  */
 function _simplenews_template_get_footer_format($tid) {
-  return variable_get("simplenews_template_footer_format_$tid", FILTER_FORMAT_DEFAULT);
+  return variable_get("simplenews_template_footer_format_$tid", 'full_html');
 }
 
 /**
@@ -488,4 +529,9 @@ function _simplenews_template_get_bgcolor($tid) {
  */
 function _simplenews_template_get_css($tid) {
   return variable_get("simplenews_template_css_$tid", '');
+}
+
+function _simplenews_get_newsletter($nid) {
+	$result = db_query('SELECT n.* FROM {simplenews_newsletter} n WHERE n.nid = :nid', array(':nid' => $nid));
+	return($result->fetchAssoc());
 }
